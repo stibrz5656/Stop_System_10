@@ -540,8 +540,8 @@ const d = new Date(document.lastModified);
     let stopStartTime = null;
     let statusHoldUntil = 0; // 判定結果の表示を維持する時刻
     const STOP_SPEED = 1.0;
-    const STOP_ACCEL = 0.1;
-    const STOP_TIME = 1000; //【修正①】停止が1秒続いたら一時停止完了（単位はミリ秒）
+    const STOP_ACCEL = 0.15;
+    const STOP_TIME = 1500; //【修正①】停止が1秒続いたら一時停止完了（単位はミリ秒）
 
     // 一時不停止判定用
     let stopDetectedTime = null;
