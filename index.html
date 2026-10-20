@@ -1,0 +1,1012 @@
+<!DOCTYPE html>
+<!--
+【修正版・注釈】
+主な修正は JavaScript 内の【修正１】～【修正１１】です。
+・停止判定の誤検出対策
+・GPS/加速度データ未取得時に停止と誤認しない対策
+・同じ標識を見続けたときの警告の繰り返し防止
+・カメラ/モデル起動失敗時の案内
+-->
+<html lang="ja">
+<center>
+<div id="main-screen"></div>
+<h1 id="school-title" class="title-text">留萌高校電気建築科</h1>
+<button id="help-button" onclick="showhelp()">ヘルプ</button>
+
+<div id="title-text">
+<span class="logo-char char-b">一</span>
+<span class="logo-char char-p">時</span>
+<span class="logo-char char-y">停</span>
+<span class="logo-char char-g">止</span>
+<span class="logo-char char-u">シ</span>
+<span class="logo-char char-a">ス</span>
+<span class="logo-char char-m">テ</span>
+<span class="logo-char char-z">ム</span>
+
+</div>
+<div id="webcam-container"></div>
+<div id="label-container"></div>
+ <button id="permission-btn"onclick="requestAccess()">センサーを許可</button>
+ <button id="start-button"style="display: none;" onclick="init()">開始</button>
+</center>
+<div id="status-box">
+
+    <!-- 左：速度 -->
+    <div class="speed-area">
+        <span id="speed">--</span>
+        <span class="unit">km/h</span>
+    </div>
+
+    <!-- 右：揺れ・認識率を2段 -->
+    <div class="info-area">
+
+        <div class="data-box" id="data-area" style="display:none;">
+            <span class="label">揺れ</span>
+            <span id="val-total" class="highlight">--</span>
+            <span >G</span>
+        </div>
+
+        <div class="data-box">
+            <span class="label">認識率</span>
+            <span id="confidence">-- %</span>
+        </div>
+
+    </div>
+
+    <!-- 下：停止状態 -->
+    <div id="stop-status" class="highlight">準備中</div>
+
+</div>
+<div id="warning-message">🚨止まれ🚨</div>
+<div id="last-update">
+    Last Updated：<span id="lastModified"></span>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+<meta name="viewport" content="width=device-width">
+
+
+<div class="photo-area">
+  <!-- 左端に配置される写真 -->
+  <img src="IMG_02-removebg-preview.png" alt="左の写真" style="width: 30%;">
+  
+  <!-- 右端に配置される写真 -->
+  <img src="ChatGPT Image 2026年7月10日 15_04_42.png" alt="右の写真" style="width: 30%;">
+</div>
+
+<head>
+ <style>
+  .title-text{
+  margin-top: 75px;
+}
+ 
+.photo-area{
+  display: flex;
+  justify-content: space-between;
+}
+
+/* スマホだけ写真を上に上げる */
+@media screen and (max-width: 768px){
+  .photo-area{
+    margin-top: -20px;
+  }
+}
+.logo-char{
+    display:inline-block;
+    font-size:100px;
+    font-weight:bold;
+}
+
+
+    .char-b { color: #4DA6FF; transform: rotate(-3deg); font-size:75px}
+    .char-p { color: #FF6B6B; transform: rotate(5deg);font-size:75px }
+    .char-y { color: #FAD02E; transform: rotate(-4deg);font-size:75px }
+    .char-g { color: #2ECC71; transform: rotate(3deg);font-size:75px }
+    .char-u { color: #a60ca4; transform: rotate(9deg);font-size:75px }
+    .char-a { color: #18b5f9; transform: rotate(-3deg);font-size:75px }
+    .char-m { color: #ff0898; transform: rotate(9deg);font-size:75px }
+    .char-z { color: #05e010; transform: rotate(-4deg);font-size:75px }
+    .sub-title { font-size: 18px; color: #444; font-weight: bold; margin-top: 8px; letter-spacing: 2px; text-transform: uppercase; }
+
+    #image-container { max-width: 90%; margin: 0 auto 25px auto; }
+    .roadmap-img { max-width: 85%; height: auto; border-radius: 20px; }
+
+
+
+
+
+
+    #help-button{
+    position: absolute;
+    top: 2px;
+    left: 2px;
+    z-index: 9999;
+    font-size: 12.5px;
+    
+}
+
+  div {color:rgb(0, 0, 0);}
+  div {font-size: 40px;}
+  button {color:rgb(0, 0, 0);}
+  button {font-size: 40px;}
+  button {background-color:rgb(0, 208, 250);}
+  button {padding: 5px 30px;}
+  button {border-radius: 10px;}
+  body   {font-family: sans-serif; text-align:right}
+  #speed {font-size: 50px; font-weight: bold; color:rgb(0, 0, 0)}
+  .unit  {font-size: 30px; }
+  #stop-status,#higilight {font-size: 50px; font-weight: bold; color:rgb(0, 0, 0)}
+/* スマホではステータスボックスをカメラ画像の下に配置 */
+@media screen and (max-width: 768px) {
+    #status-box {
+        position: relative;
+        top: auto;
+        right: auto;
+        width: fit-content;
+        max-width: 90%;
+        margin: 10px auto;
+        z-index: 999;
+    }
+}
+#status-box {
+    position: relative;
+    display: none;
+    width: fit-content;
+    max-width: 95%;
+    margin: 10px auto;
+    padding: 8px 15px;
+
+    background: rgba(255,255,255,0.9);
+    border: 2px solid #000;
+    border-radius: 10px;
+
+    text-align: center;
+    z-index: 50;
+}
+
+/* 速度＋揺れ・認識率 */
+#status-box .speed-area {
+    display: inline-flex;
+    align-items: center;
+    vertical-align: middle;
+    margin-right: 20px;
+}
+
+#status-box #speed {
+    font-size: 30px;
+    font-weight: bold;
+}
+
+#status-box .unit {
+    font-size: 16px;
+}
+
+/* 揺れ・認識率を縦2段 */
+#status-box .info-area {
+    display: inline-flex;
+    flex-direction: column;
+    vertical-align: middle;
+    text-align: left;
+}
+
+#status-box .data-box {
+    font-size: 14px;
+    white-space: nowrap;
+    margin: 0;
+    line-height: 1.4;
+}
+
+#status-box .label,
+#status-box #val-total,
+#status-box #confidence {
+    font-size: 14px;
+}
+
+/* 停止状態は一番下 */
+#status-box #stop-status {
+    display: block;
+    width: 100%;
+    font-size: 18px;
+    font-weight: bold;
+    margin-top: 5px;
+}
+#warning-message {
+      display: none; /* 最初は隠しておく（超重要） */
+      font-size: 50px; /* 文字を巨大に */
+      color: white;
+      background-color: red;
+      font-weight: bold;
+      padding: 20px;
+      border-radius: 10px;
+      white-space: nowrap;
+      /* 画面のど真ん中に強制的に配置する魔法のコード */
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 200; /* カメラより手前に出す */
+  }
+#last-update {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    width: 100%;
+
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+
+    text-align: center;
+    padding: 8px 0;
+
+    font-size: 14px;
+    z-index: 9999;
+}  
+
+/*【ヘルプ画面改善】背景を暗くし、説明をカードごとに整理 */
+#help-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  z-index: 20000;
+  background: rgba(15, 25, 45, 0.72);
+  padding: 16px;
+  box-sizing: border-box;
+  overflow-y: auto;
+  text-align: left;
+  font-size: 16px;
+}
+#help-overlay.is-open { display: flex; align-items: flex-start; justify-content: center; }
+#help-panel {
+  position: relative;
+  width: min(980px, 100%);
+  margin: auto;
+  background: #fff;
+  color: #172033;
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 18px 55px rgba(0,0,0,.35);
+  text-align: left;
+  font-size: 16px;
+}
+#help-header {
+  background: linear-gradient(110deg, #087fe5, #24b7ed);
+  color: white;
+  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+#help-header h2 { margin: 0; font-size: clamp(22px, 4vw, 30px); line-height: 1.3; }
+#help-header p { margin: 5px 0 0; font-size: 14px; color: white; }
+#help-close {
+  flex: 0 0 auto;
+  border: 0;
+  border-radius: 50%;
+  width: 42px;
+  height: 42px;
+  padding: 0;
+  background: white;
+  color: #087fe5;
+  font-size: 26px;
+  font-weight: bold;
+  cursor: pointer;
+}
+#help-content {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 14px;
+  padding: 16px;
+}
+.help-column { display: flex; flex-direction: column; gap: 14px; min-width: 0; }
+.help-card {
+  border: 1px solid #d8e4f2;
+  border-radius: 13px;
+  overflow: hidden;
+  background: #fff;
+  color: #172033;
+}
+.help-card h3 {
+  margin: 0;
+  padding: 10px 13px;
+  font-size: 18px;
+  line-height: 1.35;
+  background: #eef6ff;
+  color: #0757a5;
+}
+.help-card .help-body { padding: 12px 14px; font-size: 15px; line-height: 1.65; }
+.help-card p { margin: 0 0 8px; }
+.help-card p:last-child { margin-bottom: 0; }
+.help-steps { margin: 0; padding-left: 1.4em; }
+.help-steps li { margin: 0 0 7px; padding-left: 2px; }
+.help-steps li:last-child { margin-bottom: 0; }
+.help-pill {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 3px 9px;
+  font-weight: bold;
+  white-space: nowrap;
+  font-size: 13px;
+  margin-right: 4px;
+}
+.help-blue { background: #e3f2ff; color: #0757a5; }
+.help-red { background: #ffe8eb; color: #b42336; }
+.help-green { background: #e3f8e8; color: #147a35; }
+.help-orange { background: #fff1d6; color: #975500; }
+.help-status { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 10px; }
+.help-status:last-child { margin-bottom: 0; }
+.help-status strong { display: block; margin-bottom: 1px; }
+.help-icon { flex: 0 0 34px; width: 34px; height: 34px; border-radius: 10px; display: grid; place-items: center; font-size: 20px; background: #f0f4f8; }
+.help-warning { background: #fff8e8; border-color: #ffe0a0; }
+.help-warning h3 { background: #fff0ce; color: #8b5200; }
+.help-flow { display: flex; flex-wrap: wrap; gap: 7px; align-items: center; margin-top: 8px; }
+.help-flow span { border-radius: 8px; background: #edf5ff; color: #0757a5; padding: 7px 9px; font-weight: bold; font-size: 13px; }
+.help-flow b { color: #64748b; }
+#help-footer { padding: 0 16px 16px; display: flex; justify-content: flex-end; }
+#help-footer button {
+  background: #087fe5; color: white; border: 0; border-radius: 10px;
+  padding: 10px 22px; font-size: 16px; cursor: pointer;
+}
+@media (max-width: 700px) {
+  #help-overlay { padding: 8px; }
+  #help-header { padding: 14px; }
+  #help-content { grid-template-columns: 1fr; padding: 10px; gap: 10px; }
+  .help-column { gap: 10px; }
+  .help-card h3 { font-size: 17px; }
+  .help-card .help-body { font-size: 14px; padding: 10px 12px; }
+  #help-footer { padding: 0 10px 12px; }
+}
+
+  </style>
+</head>
+
+
+
+<!--【ヘルプ画面改善】alert()ではなく、読みやすい専用ヘルプ画面を表示 -->
+<div id="help-overlay" role="dialog" aria-modal="true" aria-labelledby="help-title" onclick="closeHelpIfBackdrop(event)">
+  <section id="help-panel">
+    <header id="help-header">
+      <div>
+        <h2 id="help-title">❔ ヘルプ</h2>
+        <p>一時停止検知システムの使い方</p>
+      </div>
+      <button id="help-close" type="button" aria-label="ヘルプを閉じる" onclick="hidehelp()">×</button>
+    </header>
+
+    <div id="help-content">
+      <div class="help-column">
+        <section class="help-card">
+          <h3>① センサーの許可と起動</h3>
+          <div class="help-body">
+            <ol class="help-steps">
+              <li>実験前に自転車を安全な場所に停車させ、スマートフォンをしっかり固定します。</li>
+              <li><span class="help-pill help-blue">センサーを許可</span>を押し、カメラ・位置情報・加速度センサーの使用を許可します。</li>
+              <li><span class="help-pill help-green">開始</span>ボタンが表示されたら押して、システムを起動します。</li>
+            </ol>
+            <p style="margin-top:9px;color:#526176;font-size:13px;">※ ブラウザや端末によって、許可画面や表示が異なる場合があります。</p>
+          </div>
+        </section>
+
+        <section class="help-card">
+          <h3>② 画面の見方</h3>
+          <div class="help-body">
+            <p><span class="help-pill help-blue">速度</span> GPSから取得した移動速度（km/h）です。</p>
+            <p><span class="help-pill help-orange">揺れ</span> 加速度センサーが検出した動きの大きさ（G）です。</p>
+            <p><span class="help-pill" style="background:#eee5ff;color:#6034a5;">認識率</span> AIが「止まれ」を認識した確率（%）です。</p>
+            <p><span class="help-pill help-red">停止状態</span> 準備中・判定中・走行中・停止完了など、現在の判定を表示します。</p>
+          </div>
+        </section>
+
+        <section class="help-card">
+          <h3>③ 検知から判定までの流れ</h3>
+          <div class="help-body">
+            <div class="help-flow">
+              <span>標識を検知</span><b>→</b><span>認識を確認</span><b>→</b><span>停止を確認</span><b>→</b><span>結果を表示</span>
+            </div>
+            <ol class="help-steps" style="margin-top:10px;">
+              <li>カメラ映像からAIが「止まれ」の標識を探します。</li>
+              <li>標識を認識すると、画面表示や音声で知らせます。</li>
+              <li>GPS速度と加速度の情報を使って、停止したかどうかを判定します。</li>
+              <li>標識を見失うまでは、同じ標識を繰り返し判定しない仕組みです。</li>
+            </ol>
+          </div>
+        </section>
+      </div>
+
+      <div class="help-column">
+        <section class="help-card">
+          <h3>④ 判定メッセージの意味</h3>
+          <div class="help-body">
+            <div class="help-status">
+              <div class="help-icon">🛑</div>
+              <div><strong style="color:#b42336;">止まれ</strong>標識を検知したときに表示・通知します。</div>
+            </div>
+            <div class="help-status">
+              <div class="help-icon" style="background:#fff0d5;">⚠️</div>
+              <div><strong style="color:#975500;">一時不停止</strong>設定した条件で停止が確認できなかった場合に表示します。</div>
+            </div>
+            <div class="help-status">
+              <div class="help-icon" style="background:#e3f8e8;">✅</div>
+              <div><strong style="color:#147a35;">停止完了</strong>システムが停止したと判定した場合に表示します。</div>
+            </div>
+            <div class="help-status">
+              <div class="help-icon">⏳</div>
+              <div><strong style="color:#526176;">取得待ち・判定中</strong>GPSやセンサーの値を取得している途中などに表示します。</div>
+            </div>
+          </div>
+        </section>
+
+        <section class="help-card help-warning">
+          <h3>⑤ 安全のための注意事項</h3>
+          <div class="help-body">
+            <ul class="help-steps">
+              <li>このシステムは研究・実験用であり、交通ルール上の停止を保証するものではありません。</li>
+              <li><strong>走行中はスマートフォンを操作したり、画面を注視したりしないでください。</strong></li>
+              <li>実験は安全を確保した場所で行い、周囲の人や車両に十分注意してください。</li>
+              <li>GPSやセンサーの状態によって、実際の動きと判定が一致しないことがあります。</li>
+            </ul>
+          </div>
+        </section>
+
+        <section class="help-card">
+          <h3>⑥ うまく動作しないとき</h3>
+          <div class="help-body">
+            <p>・カメラが映らない：ブラウザのカメラ使用許可を確認してください。</p>
+            <p>・速度が「--」のまま：位置情報の許可とGPS受信環境を確認してください。</p>
+            <p>・揺れが「--」のまま：端末・ブラウザが加速度センサーに対応しているか確認してください。</p>
+            <p>・標識を認識しない：標識を明るく、カメラに見やすく映してください。</p>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <footer id="help-footer">
+      <button type="button" onclick="hidehelp()">閉じる</button>
+    </footer>
+  </section>
+</div>
+
+<script type="text/javascript">
+const d = new Date(document.lastModified);
+
+    document.getElementById("lastModified").textContent =
+    d.getFullYear() + "/" +
+    String(d.getMonth() + 1).padStart(2, "0") + "/" +
+    String(d.getDate()).padStart(2, "0") + " " +
+    String(d.getHours()).padStart(2, "0") + ":" +
+    String(d.getMinutes()).padStart(2, "0");
+
+    // AudioContext（最初に1回だけ作成）
+    const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    let hasPlayed = false;
+    let stopSignDetected = false;
+    let stopCompleteUntil = 0;
+    let hasSpokenStop = false;
+
+    // 電子音（）
+    function playBeep() {
+    const now = audioCtx.currentTime;
+
+    const gain = audioCtx.createGain();
+
+    const osc1 = audioCtx.createOscillator();
+
+    // 電子音らしい音色
+    osc1.type = "square";
+
+    // 周波数
+    osc1.frequency.setValueAtTime(2217.461, now); // メイン
+
+    // 接続
+    osc1.connect(gain);
+    gain.connect(audioCtx.destination);
+
+    // クリックノイズ防止
+    gain.gain.setValueAtTime(0, now);
+    gain.gain.linearRampToValueAtTime(0.06, now + 0.003);
+    gain.gain.setValueAtTime(0, now + 0.997);
+    gain.gain.linearRampToValueAtTime(0, now + 1.000);
+
+    // 再生
+    osc1.start(now);
+    osc1.stop(now + 1);
+
+}
+
+    function speakAlert(text) {
+    if (!window.speechSynthesis) return;
+    //【修正９】前の音声が残っている場合はキャンセルして、音声の連続再生を防ぐ
+    window.speechSynthesis.cancel();
+    const uttr = new SpeechSynthesisUtterance(text);
+    uttr.lang = "ja-JP";
+    uttr.rate = 1.0;      // ゆっくり
+    uttr.volume = 1.0;    // 最大音量
+    window.speechSynthesis.speak(uttr);
+    }
+    // More API functions here:
+    // https://github.com/googlecreativelab/teachablemachine-community/tree/master/libraries/image
+
+    // the link to your model provided by Teachable Machine export panel
+    const URL = "https://teachablemachine.withgoogle.com/models/amJFUefti/";
+
+    let model, webcam, labelContainer, maxPredictions;
+    let speedKmh = 0;
+    let currentStatus = "準備中"; //【修正⑪】状態表示用の変数を明示的に宣言
+    //【修正２】GPSの速度を一度でも正常取得できたか。未取得の0 km/hを停止扱いしない
+    let gpsSpeedAvailable = false;
+    //【修正２】加速度センサーから有効な値を取得できているか
+    let motionAvailable = false;
+    let stopConfidenceCount = 0;
+    let stopStartTime = null;
+    let statusHoldUntil = 0; // 判定結果の表示を維持する時刻
+    const STOP_SPEED = 1.0;
+    const STOP_ACCEL = 0.1;
+    const STOP_TIME = 1000; //【修正①】停止が1秒続いたら一時停止完了（単位はミリ秒）
+
+    // 一時不停止判定用
+    let stopDetectedTime = null;
+    let hasSpokenNoStop = false;
+    // 次の一時停止判定を開始できるか
+    let stopCycleLocked = false;
+    // 標識が消えた回数
+    let noStopFrameCount = 0;
+    const NO_STOP_TIME = 5000; //【修正①】止まれ検知から5秒後に判定（単位はミリ秒）
+    // Load the image model and setup the webcam
+   async function init() {
+   try {
+   //【修正３】モデル読み込み・カメラ起動に失敗した場合は、下の catch で案内する
+   // 高校名を非表示
+document.getElementById("school-title").style.display = "none";
+
+// 一時停止システムを非表示
+document.getElementById("title-text").style.display = "none";
+
+// ステータスを表示
+document.getElementById("status-box").style.display = "block";
+    document.getElementById("start-button").style.display = "none";
+
+    const modelURL = URL + "model.json";
+    const metadataURL = URL + "metadata.json";
+
+
+        // load the model and metadata
+        // Refer to tmImage.loadFromFiles() in the API to support files from a file picker
+        // or files from your local hard drive
+        // Note: the pose library adds "tmImage" object to your window (window.tmImage)
+        model = await tmImage.load(modelURL, metadataURL);
+        maxPredictions = model.getTotalClasses();
+
+        // Convenience function to setup a webcam
+        const flip = false ; // whether to flip the webcam
+        webcam = new tmImage.Webcam(390, 390, false);// width, height, flip
+        
+        await webcam.setup({ facingMode: "environment" }); // request access to the webcam
+        await webcam.play();
+        window.requestAnimationFrame(loop);
+
+        // append elements to the DOM
+        document.getElementById("webcam-container").appendChild(webcam.canvas);
+        labelContainer = document.getElementById("label-container");
+        for (let i = 0; i < maxPredictions; i++) { // and class labels
+            labelContainer.appendChild(document.createElement("div"));
+        }
+   } catch (err) {
+        console.error("初期化エラー:", err);
+        alert("カメラまたはAIモデルを起動できませんでした。通信環境・カメラの許可を確認して、もう一度お試しください。");
+        document.getElementById("start-button").style.display = "block";
+        document.getElementById("status-box").style.display = "none";
+   }
+    }
+
+let frameCount = 0;
+
+async function loop() {
+    webcam.update();
+
+    frameCount++;
+
+    if (frameCount % 10 === 0) {
+        await predict();
+    }
+
+    requestAnimationFrame(loop);
+}
+
+    // run the webcam image through the image model
+    async function predict() {
+        const prediction = await model.predict(webcam.canvas);
+        document.getElementById("status-box").style.display = "block";
+        let isStopDetected = false; // 「止まれ」が見つかったかどうかの目印（フラグ）
+
+        for (let i = 0; i < maxPredictions; i++) {
+            const classPrediction =
+                prediction[i].className + ": " + prediction[i].probability.toFixed(2);
+ 
+
+            // ▼▼▼ 追加：止まれの判定 ▼▼▼
+            // ※「止まれ」という文字は、Teachable Machineで学習させた時の名前と完全に同じにしてください！
+            const probability = prediction[i].probability;
+            
+            if (prediction[i].className === "止まれ") {
+
+            document.getElementById("confidence").textContent =
+            (probability * 100).toFixed(1) + "%";
+
+            if (probability > 0.70) {
+                stopConfidenceCount++;
+            } else {
+            stopConfidenceCount = 0;
+                }
+
+            if (stopConfidenceCount >= 3) {
+                isStopDetected = true;
+                }
+            }  
+ }
+if (isStopDetected) {
+
+    // 標識を認識している間は消失回数をリセット
+    noStopFrameCount = 0;
+
+    document.getElementById("warning-message").style.display = "block";
+
+    // 判定がロックされていなければ処理する
+    if (!stopCycleLocked) {
+
+        stopSignDetected = true;
+
+        if (stopDetectedTime === null) {
+            stopDetectedTime = Date.now();
+            hasSpokenNoStop = false;
+            hasSpokenStop = false;
+        }
+
+        // 電子音と音声は1回だけ
+        if (!hasPlayed) {
+            playBeep();
+            hasPlayed = true;
+            speakAlert("一時停止してください");
+        }
+    }
+
+} else {
+
+    document.getElementById("warning-message").style.display = "none";
+
+    // 標識が認識されなかった回数を数える
+    noStopFrameCount++;
+
+    // 3回連続で認識されなければ次の判定を許可
+    if (noStopFrameCount >= 3) {
+        stopCycleLocked = false;
+        noStopFrameCount = 0;
+    }
+}
+    }
+
+if (navigator.geolocation) {
+
+    // GPSの速度・位置情報を監視
+    navigator.geolocation.watchPosition(success, error, {
+        enableHighAccuracy: true,
+        maximumAge: 0,
+        timeout: 10000
+    });
+
+} else {
+    alert("このブラウザはGPSに対応していません。");
+}
+
+function success(position) {
+    //【修正４】GPS速度が null のときは、0 km/h とみなさない
+    if (position.coords.speed != null && Number.isFinite(position.coords.speed)) {
+        speedKmh = position.coords.speed * 3.6;
+        gpsSpeedAvailable = true;
+    }
+}
+
+// 速度表示だけを0.05秒ごとに更新
+setInterval(() => {
+    document.getElementById("speed").textContent =
+        speedKmh.toFixed(1);
+}, 50);
+
+
+    function error(err) {
+      //【修正１０】GPSが使えない場合はコンソールに理由を記録
+      console.warn(`GPS ERROR(${err.code}): ${err.message}`);
+      gpsSpeedAvailable = false;
+      document.getElementById("speed").textContent = "--";
+    }
+ let lastSpokenTime = 0;
+
+    // 直近1秒分の揺れを保存する配列
+    let recentValues = [];
+
+    // 実験で記録する値
+    let runningValue = null;
+    let stoppedValue = null;
+
+    function requestAccess() {
+      if (typeof DeviceMotionEvent !== "undefined" &&
+          typeof DeviceMotionEvent.requestPermission === "function") {
+        DeviceMotionEvent.requestPermission()
+          .then(permissionState => {
+            if (permissionState === "granted") {
+
+    // iPhone Safari用：音声合成をユーザー操作で一度有効化
+    if (window.speechSynthesis) {
+        const testUtterance = new SpeechSynthesisUtterance("きどうしました。");
+        testUtterance.lang = "ja-JP";
+        testUtterance.volume = 0;
+        window.speechSynthesis.speak(testUtterance);
+    }
+
+    // AudioContextもiPhone用に再開
+    if (audioCtx.state === "suspended") {
+        audioCtx.resume();
+    }
+
+    startSensor();
+} else {
+              alert("センサーの利用が拒否されました");
+            }
+          })
+          .catch(console.error);
+      } else {
+        startSensor();
+      }
+    }
+
+    function startSensor() {
+      window.addEventListener("devicemotion", handleMotion);
+
+      document.getElementById("permission-btn").style.display = "none";
+      document.getElementById("start-button").style.display = "block";
+      document.getElementById("data-area").style.display = "block";
+
+    }
+
+function handleMotion(event) {
+    //【修正５】端末によって event.acceleration が null になることがある。
+    // その場合に 0 を代入すると「揺れがない＝停止」と誤判定するため、判定を保留する。
+    const acc = event.acceleration;
+    const validAcceleration = acc &&
+        Number.isFinite(acc.x) &&
+        Number.isFinite(acc.y) &&
+        Number.isFinite(acc.z);
+
+    if (!validAcceleration) {
+        motionAvailable = false;
+        document.getElementById("val-total").textContent = "--";
+        document.getElementById("stop-status").textContent = "加速度センサー取得待ち";
+        document.getElementById("stop-status").style.color = "orange";
+        return;
+    }
+
+    motionAvailable = true;
+    const x = acc.x;
+    const y = acc.y;
+    const z = acc.z;
+
+    const total = Math.sqrt(x * x + y * y + z * z) / 9.80665;
+
+    document.getElementById("val-total").textContent = total.toFixed(2);
+
+    const now = Date.now();
+    // 一時停止の判定結果を2.5秒間維持する
+    if (now < statusHoldUntil) {
+    return;
+    }
+
+    // --------------------------------
+    // 停止しているか判定
+    // --------------------------------
+    //【修正６】「GPS速度が低い」または「揺れが小さい」の片方だけでは
+    // 停止と判断しない。両センサーが有効で、両方の条件を満たした場合のみ停止扱い。
+    // センサーが未取得なら false とし、停止・一時停止完了を誤って表示しない。
+    const canJudgeStop = gpsSpeedAvailable && motionAvailable;
+    const isStill = canJudgeStop &&
+        (speedKmh <= STOP_SPEED) &&
+        (total <= STOP_ACCEL);
+
+    //【修正⑧】必要なセンサーがそろっていない間は判定しない
+    if (!canJudgeStop) {
+        document.getElementById("stop-status").textContent =
+            !gpsSpeedAvailable ? "GPS速度取得待ち" : "センサー取得待ち";
+        document.getElementById("stop-status").style.color = "orange";
+        return;
+    }
+
+
+    // ========================================
+    // ① 一時停止標識を検知中
+    // ========================================
+    if (stopSignDetected) {
+
+        // 「止まれ」を検知してから一定時間
+        // まだ停止していない場合
+        if (
+            canJudgeStop &&
+            stopDetectedTime !== null &&
+            now - stopDetectedTime >= NO_STOP_TIME &&
+            !isStill &&
+            !hasSpokenNoStop
+        ) {
+
+            // ----------------------------
+            // 一時不停止
+            // ----------------------------
+            currentStatus = "一時不停止";
+            statusHoldUntil = Date.now() + 1500;
+            
+            document.getElementById("stop-status").textContent =
+                "一時不停止";
+
+            document.getElementById("stop-status").style.color =
+                "red";
+
+            speakAlert("一時停止していません");
+
+            hasSpokenNoStop = true;
+
+            //【修正７】この標識の判定を終了し、同じ標識を見続けても警告を繰り返さない
+            stopCycleLocked = true;
+            stopSignDetected = false;
+            stopDetectedTime = null;
+
+            // 次の標識は、AIが3回連続で見失った後に再判定できる
+            hasPlayed = false;
+            hasSpokenStop = false;
+
+            // 停止タイマーもリセット
+            stopStartTime = null;
+
+            return;
+        }
+
+
+        // --------------------------------
+        // 停止している
+        // --------------------------------
+        if (isStill) {
+
+            if (stopStartTime === null) {
+                stopStartTime = now;
+            }
+
+            // 0.8秒以上停止した
+            if (
+                now - stopStartTime >= STOP_TIME &&
+                !hasSpokenStop
+            ) {
+
+                // ----------------------------
+                // 一時停止完了
+                // ----------------------------
+                currentStatus = "一時停止完了";
+                statusHoldUntil = Date.now() + 1500;
+
+                document.getElementById("stop-status").textContent =
+                    "一時停止完了";
+
+                document.getElementById("stop-status").style.color =
+                    "green";
+
+                speakAlert("一時停止しました");
+
+                hasSpokenStop = true;
+
+                // この標識の判定終了
+                stopCycleLocked = true;
+                stopSignDetected = false;
+                stopDetectedTime = null;
+
+                // 次の標識に備える
+                hasPlayed = false;
+                hasSpokenNoStop = false;
+
+                stopStartTime = null;
+
+                return;
+            }
+
+            // まだ停止時間が足りない
+            if (!hasSpokenStop) {
+
+                currentStatus = "停止";
+
+                document.getElementById("stop-status").textContent =
+                    "停止";
+
+                document.getElementById("stop-status").style.color =
+                    "blue";
+            }
+
+            return;
+        }
+
+
+        // --------------------------------
+    // 走行中 → 通常の走行状態へ切り替え
+    // --------------------------------
+    stopStartTime = null;
+
+    currentStatus = "走行中";
+
+    document.getElementById("stop-status").textContent =
+    "走行中";
+
+    document.getElementById("stop-status").style.color =
+    "red";
+
+        return;
+    }
+
+
+    // ========================================
+    // ② 一時停止標識を検知していない
+    // ========================================
+
+    // 車両が停止している
+    if (isStill) {
+
+        if (stopStartTime === null) {
+            stopStartTime = now;
+        }
+
+        // 一定時間停止していたら「停止」
+        if (now - stopStartTime >= STOP_TIME) {
+
+            currentStatus = "停止";
+
+            document.getElementById("stop-status").textContent =
+                "停止";
+
+            document.getElementById("stop-status").style.color =
+                "blue";
+        }
+
+    } else {
+
+        // ========================================
+        // ③ 走行を再開した
+        // ========================================
+
+        stopStartTime = null;
+
+        // ★重要
+        // 一時不停止後でも走行したら必ず走行中に戻す
+        hasSpokenNoStop = false;
+
+        currentStatus = "走行中";
+
+        document.getElementById("stop-status").textContent =
+            "走行中";
+
+        document.getElementById("stop-status").style.color =
+            "red";
+    }
+}
+ //【ヘルプ画面改善】ヘルプを専用画面で開閉する
+ function showhelp() {
+   const overlay = document.getElementById("help-overlay");
+   overlay.classList.add("is-open");
+   document.body.style.overflow = "hidden";
+   document.getElementById("help-close").focus();
+ }
+ function hidehelp() {
+   document.getElementById("help-overlay").classList.remove("is-open");
+   document.body.style.overflow = "";
+   document.getElementById("help-button").focus();
+ }
+ function closeHelpIfBackdrop(event) {
+   if (event.target.id === "help-overlay") hidehelp();
+ }
+ document.addEventListener("keydown", function(event) {
+   if (event.key === "Escape") {
+     const overlay = document.getElementById("help-overlay");
+     if (overlay && overlay.classList.contains("is-open")) hidehelp();
+   }
+ });
+</script>
